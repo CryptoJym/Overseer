@@ -4,6 +4,12 @@ inputs:
   github_token:
     description: "GitHub token"
     required: true
+  todoist_api_key:
+    description: "Todoist API key"
+    required: false
+  new_milestones:
+    description: "JSON describing new roadmap milestones"
+    required: false
 runs:
   using: "node16"
   main: "dist/index.js"
