@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Overseer Configuration",
+  "type": "object",
+  "properties": {
+    "memoryMcpUrl": {
+      "type": "string",
+      "description": "URL of the Memory Graph MCP endpoint"
+    },
+    "todoist": {
+      "type": "object",
+      "description": "Todoist related settings",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether syncing tasks to Todoist is enabled"
+        }
+      },
+      "additionalProperties": false
+    },
+    "prompts": {
+      "type": "object",
+      "description": "Prompt strings used by Overseer",
+      "properties": {
+        "summaryPrompt": {
+          "type": "string",
+          "description": "Prompt used when generating summaries"
+        }
+      },
+      "additionalProperties": true
+    },
+    "port": {
+      "type": "integer",
+      "description": "Port for any local services"
+    }
+  },
+  "additionalProperties": false
+}
