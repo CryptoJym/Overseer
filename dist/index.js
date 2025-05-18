@@ -3,6 +3,43 @@ const path = require('path');
 const core = require('@actions/core');
 const github = require('@actions/github');
 const axios = require('axios');
+const { spawn } = require('child_process');
+
+async function ensureMemoryServer(memoryUrl) {
+  const baseUrl = new URL(memoryUrl).origin;
+  try {
+    await axios.get(baseUrl);
+  } catch (_) {
+    core.info('Starting local Memory Graph MCP server...');
+    const child = spawn('npx', ['-y', '@modelcontextprotocol/server-memory'], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
+    await new Promise(res => setTimeout(res, 1000));
+  }
+}
+
+async function persistToMemory({ prNumber, prSummary, mergedBy, closedIssues, memoryUrl }) {
+  await ensureMemoryServer(memoryUrl);
+  const payload = {
+    entities: [
+      {
+        name: `PR-${prNumber}`,
+        entityType: 'pull_request',
+        observations: [
+          { summary: prSummary, timestamp: new Date().toISOString(), merged_by: mergedBy }
+        ]
+      }
+    ],
+    relations: closedIssues.map(id => ({
+      source: `PR-${prNumber}`,
+      type: 'implements',
+      target: `Issue-${id}`
+    }))
+  };
+  await axios.post(`${memoryUrl}/nodes`, payload);
+
 const fs = require('fs');
 const { execSync } = require('child_process');
 
@@ -35,7 +72,6 @@ async function postTodoist(todoistApiKey, repo, issueTitle) {
 }
 
 async function run() {
-=======
 function locateMcpConfig() {
   const envPath = process.env.MCP_CONFIG;
   if (envPath && fs.existsSync(envPath)) {
@@ -121,6 +157,15 @@ async function run(opts = {}) {
     // Build summary
     const prSummary = buildSummary(pr, changedFiles);
 
+    // 2. Persist PR info to Memory Graph MCP
+    const memoryUrl = process.env.MEMORY_MCP_URL || 'http://localhost:5000';
+    try {
+      const issueRegex = /(close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)/gi;
+      const closedIssues = [];
+      let match;
+      while ((match = issueRegex.exec(pr.body || '')) !== null) {
+        closedIssues.push(match[2]);
+
     // 2. Post to Memory Graph MCP if configured
     try {
       const memoryUrl = process.env.MEMORY_MCP_URL; // e.g., http://localhost:5000/nodes
@@ -134,6 +179,14 @@ async function run(opts = {}) {
       } else {
         core.info('No memoryMcpUrl set – skipping Memory Graph step.');
       }
+      await persistToMemory({
+        prNumber,
+        prSummary,
+        mergedBy: pr.merged_by.login,
+        closedIssues,
+        memoryUrl
+      });
+      core.info('Posted summary to Memory Graph.');
     } catch (err) {
       core.warning(`Memory Graph post failed: ${err.message}`);
     }
@@ -255,6 +308,11 @@ async function run(opts = {}) {
     core.setFailed(error.message);
   }
 }
+
+if (require.main === module) {
+  run();
+} else {
+  module.exports = { run, persistToMemory, ensureMemoryServer };
 
 run();
 

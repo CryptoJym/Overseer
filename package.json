@@ -13,6 +13,13 @@
     "@octokit/rest": "^20.0.0",
     "axios": "^1.6.8"
   },
+  "devDependencies": {},
+  "scripts": {
+    "test": "NODE_PATH=test/stubs node test/index.test.js"
+  }
+}
+
+
   "devDependencies": {
     "jest": "^29.7.0",
     "express": "^4.19.2",
