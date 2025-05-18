@@ -3,6 +3,38 @@ const path = require('path');
 const core = require('@actions/core');
 const github = require('@actions/github');
 const axios = require('axios');
+const fs = require('fs');
+const { execSync } = require('child_process');
+
+function locateMcpConfig() {
+  const envPath = process.env.MCP_CONFIG;
+  if (envPath && fs.existsSync(envPath)) {
+    return envPath;
+  }
+  try {
+    const output = execSync('find / -name mcp.json 2>/dev/null', { encoding: 'utf8' });
+    const first = output.split('\n').find(Boolean);
+    return first || null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function getTodoistApiKey() {
+  if (process.env.TODOIST_API_KEY) {
+    return process.env.TODOIST_API_KEY;
+  }
+  const configPath = locateMcpConfig();
+  if (!configPath) {
+    return null;
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (data.todoist_api_key) return data.todoist_api_key;
+    if (data.todoist && data.todoist.api_key) return data.todoist.api_key;
+  } catch (_e) {}
+  return null;
+}
 
 function loadConfig() {
   const configPath = path.resolve(process.cwd(), 'overseer.config.json');
@@ -20,6 +52,9 @@ async function run(opts = {}) {
   try {
     const githubToken = opts.githubToken || core.getInput('github_token', { required: true });
     const todoistApiKey = opts.todoistApiKey !== undefined ? opts.todoistApiKey : core.getInput('todoist_api_key');
+
+    const githubToken = core.getInput('github_token', { required: true });
+    const todoistApiKey = getTodoistApiKey();
 
     const octokit = opts.octokit || github.getOctokit(githubToken);
     const context = opts.context || github.context;
