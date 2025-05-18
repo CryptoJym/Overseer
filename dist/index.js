@@ -1,6 +1,43 @@
 const core = require('@actions/core');
 const github = require('@actions/github');
 const axios = require('axios');
+const { spawn } = require('child_process');
+
+async function ensureMemoryServer(memoryUrl) {
+  const baseUrl = new URL(memoryUrl).origin;
+  try {
+    await axios.get(baseUrl);
+  } catch (_) {
+    core.info('Starting local Memory Graph MCP server...');
+    const child = spawn('npx', ['-y', '@modelcontextprotocol/server-memory'], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
+    await new Promise(res => setTimeout(res, 1000));
+  }
+}
+
+async function persistToMemory({ prNumber, prSummary, mergedBy, closedIssues, memoryUrl }) {
+  await ensureMemoryServer(memoryUrl);
+  const payload = {
+    entities: [
+      {
+        name: `PR-${prNumber}`,
+        entityType: 'pull_request',
+        observations: [
+          { summary: prSummary, timestamp: new Date().toISOString(), merged_by: mergedBy }
+        ]
+      }
+    ],
+    relations: closedIssues.map(id => ({
+      source: `PR-${prNumber}`,
+      type: 'implements',
+      target: `Issue-${id}`
+    }))
+  };
+  await axios.post(`${memoryUrl}/nodes`, payload);
+}
 
 async function run() {
   try {
@@ -30,17 +67,23 @@ async function run() {
     // Build summary
     const prSummary = `PR #${prNumber}: ${pr.title}\n\n${pr.body || ''}\n\nChanged files:\n${changedFiles}`;
 
-    // 2. (Placeholder) Post to Memory Graph MCP
+    // 2. Persist PR info to Memory Graph MCP
+    const memoryUrl = process.env.MEMORY_MCP_URL || 'http://localhost:5000';
     try {
-      const memoryUrl = process.env.MEMORY_MCP_URL; // e.g., http://localhost:5000/nodes
-      if (memoryUrl) {
-        await axios.post(memoryUrl, {
-          entities: [{ name: `PR-${prNumber}`, entityType: 'pull_request', observations: [prSummary] }]
-        });
-        core.info('Posted summary to Memory Graph.');
-      } else {
-        core.info('MEMORY_MCP_URL not set – skipping Memory Graph step.');
+      const issueRegex = /(close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)/gi;
+      const closedIssues = [];
+      let match;
+      while ((match = issueRegex.exec(pr.body || '')) !== null) {
+        closedIssues.push(match[2]);
       }
+      await persistToMemory({
+        prNumber,
+        prSummary,
+        mergedBy: pr.merged_by.login,
+        closedIssues,
+        memoryUrl
+      });
+      core.info('Posted summary to Memory Graph.');
     } catch (err) {
       core.warning(`Memory Graph post failed: ${err.message}`);
     }
@@ -71,4 +114,8 @@ async function run() {
   }
 }
 
-run();
+if (require.main === module) {
+  run();
+} else {
+  module.exports = { run, persistToMemory, ensureMemoryServer };
+}

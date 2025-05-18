@@ -8,5 +8,10 @@
     "@actions/core": "^1.10.0",
     "@actions/github": "^5.1.1",
     "axios": "^1.6.8"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "NODE_PATH=test/stubs node test/index.test.js"
   }
 }
+
