@@ -1,0 +1,1 @@
+const core=require('@actions/core');const github=require('@actions/github');async function run(){try{console.log('Overseer Action skeleton running.');core.getInput('github_token',{required:true});console.log('Context repo',github.context.repo);console.log('Context payload keys',Object.keys(github.context.payload));}catch(e){core.setFailed(e.message)}}run();
