@@ -6,6 +6,36 @@ const axios = require('axios');
 const fs = require('fs');
 const { execSync } = require('child_process');
 
+function buildSummary(pr, changedFiles) {
+  const prNumber = pr.number;
+  return `PR #${prNumber}: ${pr.title}\n\n${pr.body || ''}\n\nChanged files:\n${changedFiles}`;
+}
+
+async function postMemoryGraph(memoryUrl, prNumber, prSummary) {
+  if (!memoryUrl) {
+    core.info('MEMORY_MCP_URL not set – skipping Memory Graph step.');
+    return;
+  }
+  await axios.post(memoryUrl, {
+    entities: [{ name: `PR-${prNumber}`, entityType: 'pull_request', observations: [prSummary] }]
+  });
+  core.info('Posted summary to Memory Graph.');
+}
+
+async function postTodoist(todoistApiKey, repo, issueTitle) {
+  if (!todoistApiKey) return;
+  const baseUrl = process.env.TODOIST_API_URL || 'https://api.todoist.com/rest/v2';
+  await axios.post(`${baseUrl}/tasks`, {
+    content: `Repo ${repo}: ${issueTitle}`,
+    description: 'See GitHub issue for details',
+  }, {
+    headers: { Authorization: `Bearer ${todoistApiKey}` }
+  });
+  core.info('Task sent to Todoist.');
+}
+
+async function run() {
+=======
 function locateMcpConfig() {
   const envPath = process.env.MCP_CONFIG;
   if (envPath && fs.existsSync(envPath)) {
@@ -81,10 +111,12 @@ async function run(opts = {}) {
     }
 
     // Build summary
-    const prSummary = `PR #${prNumber}: ${pr.title}\n\n${pr.body || ''}\n\nChanged files:\n${changedFiles}`;
+    const prSummary = buildSummary(pr, changedFiles);
 
     // 2. Post to Memory Graph MCP if configured
     try {
+      const memoryUrl = process.env.MEMORY_MCP_URL; // e.g., http://localhost:5000/nodes
+      await postMemoryGraph(memoryUrl, prNumber, prSummary);
       const memoryUrl = config.memoryMcpUrl || process.env.MEMORY_MCP_URL; // e.g., http://localhost:5000/nodes
       if (memoryUrl) {
         await axios.post(memoryUrl, {
@@ -109,13 +141,7 @@ async function run(opts = {}) {
     const todoistEnabled = config.todoist ? config.todoist.enabled !== false : true;
     if (todoistEnabled && todoistApiKey) {
       try {
-        await axios.post('https://api.todoist.com/rest/v2/tasks', {
-          content: `Repo ${repo}: ${issueTitle}`,
-          description: 'See GitHub issue for details',
-        }, {
-          headers: { Authorization: `Bearer ${todoistApiKey}` }
-        });
-        core.info('Task sent to Todoist.');
+        await postTodoist(todoistApiKey, repo, issueTitle);
       } catch (err) {
         core.warning(`Todoist sync failed: ${err.message}`);
       }
@@ -124,6 +150,8 @@ async function run(opts = {}) {
     core.setFailed(error.message);
   }
 }
+
+module.exports = { run, buildSummary, postMemoryGraph, postTodoist };
 
 module.exports = { run };
 
