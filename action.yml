@@ -1,0 +1,9 @@
+name: "Repo Overseer"
+description: "GitHub Action that updates roadmap, pushes context to Memory Graph, and creates new issues & Todoist tasks after PRs are merged."
+inputs:
+  github_token:
+    description: "GitHub token"
+    required: true
+runs:
+  using: "node16"
+  main: "dist/index.js"
