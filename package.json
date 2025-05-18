@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "description": "Repo Overseer GitHub Action",
   "main": "dist/index.js",
+  "bin": {
+    "overseer": "bin/overseer.js"
+  },
   "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.10.0",
     "@actions/github": "^5.1.1",
+    "@octokit/rest": "^20.0.0",
     "axios": "^1.6.8"
   }
 }
