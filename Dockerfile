@@ -1,15 +1,8 @@
-# Build stage
-FROM node:18-alpine AS builder
-WORKDIR /app
+FROM ghcr.io/openai/codex-universal:latest
+ENV CODEX_ENV_NODE=18
+RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
 COPY package.json ./
-RUN npm install --production
-COPY dist ./dist
-COPY mcp ./mcp
-COPY start.sh ./start.sh
-
-# Runtime stage
-FROM node:18-alpine
-WORKDIR /app
-COPY --from=builder /app /app
-EXPOSE 7000 7001 7002 7003 7004 7005
-CMD ["sh", "./start.sh"]
+RUN npm install
+COPY . .
+CMD ["bash"]
