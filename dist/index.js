@@ -1,11 +1,33 @@
 const core = require('@actions/core');
 const github = require('@actions/github');
 const axios = require('axios');
+const fs = require('fs');
+const {spawn} = require('child_process');
+
+function parseRoadmap(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+  return lines.filter(l => l.startsWith('- [ ]')).map(l => l.replace('- [ ]', '').trim());
+}
+
+function buildPrompt(prSummary, roadmapTasks) {
+  const tasksSection = roadmapTasks.length ? roadmapTasks.map(t => `- ${t}`).join('\n') : 'None';
+  return `PR Summary:\n${prSummary}\n\nOpen Roadmap Tasks:\n${tasksSection}\n\nRespond with JSON {"tasks":[{"title":"","body":""}]}`;
+}
+
+async function callMcp(prompt, port) {
+  const url = `http://localhost:${port}/`;
+  const resp = await axios.post(url, {prompt});
+  if (!resp.data || !Array.isArray(resp.data.tasks)) {
+    throw new Error('Invalid MCP response');
+  }
+  return resp.data.tasks;
+}
 
 async function run() {
   try {
     const githubToken = core.getInput('github_token', { required: true });
-    const todoistApiKey = core.getInput('todoist_api_key');
+    core.setSecret(githubToken);
 
     const octokit = github.getOctokit(githubToken);
     const { context } = github;
@@ -19,51 +41,46 @@ async function run() {
     const owner = context.repo.owner;
     const repo = context.repo.repo;
 
-    // 1. Gather PR details
     const prNumber = pr.number;
     core.info(`Processing merged PR #${prNumber}`);
 
-    // Fetch changed files
     const filesResp = await octokit.rest.pulls.listFiles({ owner, repo, pull_number: prNumber, per_page: 100 });
     const changedFiles = filesResp.data.map(f => `- ${f.filename} (${f.status})`).join('\n');
 
-    // Build summary
     const prSummary = `PR #${prNumber}: ${pr.title}\n\n${pr.body || ''}\n\nChanged files:\n${changedFiles}`;
 
-    // 2. (Placeholder) Post to Memory Graph MCP
+    const roadmapTasks = parseRoadmap('ROADMAP.md');
+    const prompt = buildPrompt(prSummary, roadmapTasks);
+
+    const mcpPort = process.env.SEQUENTIAL_MCP_PORT || '7000';
+    let mcpTasks = [];
     try {
-      const memoryUrl = process.env.MEMORY_MCP_URL; // e.g., http://localhost:5000/nodes
-      if (memoryUrl) {
-        await axios.post(memoryUrl, {
-          entities: [{ name: `PR-${prNumber}`, entityType: 'pull_request', observations: [prSummary] }]
-        });
-        core.info('Posted summary to Memory Graph.');
-      } else {
-        core.info('MEMORY_MCP_URL not set – skipping Memory Graph step.');
-      }
+      const proc = spawn('npx', ['-y', '@modelcontextprotocol/server-sequential-thinking'], {
+        env: { ...process.env, PORT: mcpPort },
+        stdio: 'ignore',
+        detached: true
+      });
+      proc.unref();
+      await new Promise(res => setTimeout(res, 2000));
+      mcpTasks = await callMcp(prompt, mcpPort);
     } catch (err) {
-      core.warning(`Memory Graph post failed: ${err.message}`);
+      core.warning(`MCP call failed: ${err.message}`);
     }
 
-    // 3. Create follow-up GitHub issue
-    const issueTitle = `Follow-up tasks after PR #${prNumber}`;
-    const issueBody = `Automatically generated tasks after merging PR #${prNumber}.\n\n### Summary\n${prSummary}\n\n### TODO\n- [ ] Assess refactors\n- [ ] Update documentation\n- [ ] Write tests\n`;
+    let umbrella = null;
+    try {
+      const { data: issues } = await octokit.rest.issues.listForRepo({ owner, repo, state: 'open', per_page: 100 });
+      umbrella = issues.find(i => i.title === 'Follow-up tasks');
+    } catch (err) {
+      core.warning(`Listing issues failed: ${err.message}`);
+    }
 
-    const issueResp = await octokit.rest.issues.create({ owner, repo, title: issueTitle, body: issueBody });
-    core.info(`Created issue #${issueResp.data.number}.`);
-
-    // 4. Send to Todoist if API key provided
-    if (todoistApiKey) {
-      try {
-        await axios.post('https://api.todoist.com/rest/v2/tasks', {
-          content: `Repo ${repo}: ${issueTitle}`,
-          description: 'See GitHub issue for details',
-        }, {
-          headers: { Authorization: `Bearer ${todoistApiKey}` }
-        });
-        core.info('Task sent to Todoist.');
-      } catch (err) {
-        core.warning(`Todoist sync failed: ${err.message}`);
+    if (umbrella) {
+      const newBody = (umbrella.body || '') + '\n' + mcpTasks.map(t => `- [ ] ${t.title}`).join('\n');
+      await octokit.rest.issues.update({ owner, repo, issue_number: umbrella.number, body: newBody });
+    } else {
+      for (const task of mcpTasks) {
+        await octokit.rest.issues.create({ owner, repo, title: task.title, body: task.body || '' });
       }
     }
   } catch (error) {
@@ -71,4 +88,8 @@ async function run() {
   }
 }
 
-run();
+if (require.main === module) {
+  run();
+}
+
+module.exports = { run, parseRoadmap, buildPrompt, callMcp };
