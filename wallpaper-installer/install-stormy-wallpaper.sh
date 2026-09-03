@@ -1,17 +1,17 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-LABEL="com.openai.stormylakewallpaper"
-ROOT="$HOME/Library/Application Support/StormyLakeWallpaper"
-IMAGE="$ROOT/stormy-lake-hd.jpg"
+OLD_LABEL="com.openai.stormylakewallpaper"
+LABEL="com.openai.stormylakewallpaper.crisp"
+OLD_ROOT="$HOME/Library/Application Support/StormyLakeWallpaper"
+ROOT="$HOME/Library/Application Support/StormyLakeWallpaperCrisp"
+IMAGE="$ROOT/stormy-lake-5712.jpg"
 HTML="$ROOT/wallpaper.html"
-JXA="$ROOT/wallpaper.js"
+JXA="$ROOT/wallpaper-crisp.js"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+OLD_PLIST="$HOME/Library/LaunchAgents/$OLD_LABEL.plist"
 UID_NUMBER="$(id -u)"
-
-# High-resolution mountain-lake source. The fallback is a 5712px-wide NPS image.
-PRIMARY_IMAGE_URL='https://images.unsplash.com/photo-1476041178066-aa562074def7?auto=format&fit=crop&fm=jpg&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&ixlib=rb-4.1.0&q=60&w=3000'
-FALLBACK_IMAGE_URL='https://upload.wikimedia.org/wikipedia/commons/e/ef/Sprague_Lake_at_Sunset_%2829560309357%29.jpg'
+IMAGE_URL='https://upload.wikimedia.org/wikipedia/commons/e/ef/Sprague_Lake_at_Sunset_%2829560309357%29.jpg'
 
 fail() {
   local message="$1"
@@ -20,48 +20,53 @@ fail() {
   exit 1
 }
 
-printf '\nRepairing the storm wallpaper at full resolution…\n'
+printf '\nReplacing the broken wallpaper with a crisp full-resolution version…\n'
 mkdir -p "$ROOT" "$HOME/Library/LaunchAgents"
 
-# Remove the broken player first, so the distorted wallpaper disappears immediately.
-/bin/launchctl bootout "gui/$UID_NUMBER" "$PLIST" >/dev/null 2>&1 || true
-/usr/bin/pkill -f "$ROOT/wallpaper.js" >/dev/null 2>&1 || true
-sleep 1
+# Stop every earlier version first. The old player was kept alive by launchd,
+# so killing only its window was not enough.
+for service in \
+  "$OLD_LABEL" \
+  "$OLD_LABEL.v2" \
+  "$OLD_LABEL.v3" \
+  "$OLD_LABEL.hd" \
+  "$LABEL"
+do
+  /bin/launchctl bootout "gui/$UID_NUMBER/$service" >/dev/null 2>&1 || true
+done
 
-TMP_IMAGE="$ROOT/stormy-lake-hd.download"
-rm -f "$TMP_IMAGE"
-printf 'Downloading a full-resolution background…\n'
-if ! /usr/bin/curl -fL --retry 4 --retry-delay 1 --connect-timeout 20 \
-     -A 'Mozilla/5.0' "$PRIMARY_IMAGE_URL" -o "$TMP_IMAGE"; then
-  printf 'Primary image host was unavailable; using the high-resolution fallback…\n'
-  /usr/bin/curl -fL --retry 4 --retry-delay 1 --connect-timeout 20 \
-     -A 'Mozilla/5.0' "$FALLBACK_IMAGE_URL" -o "$TMP_IMAGE" \
-     || fail "The high-resolution background could not be downloaded."
-fi
+for plist in \
+  "$OLD_PLIST" \
+  "$HOME/Library/LaunchAgents/$OLD_LABEL.v2.plist" \
+  "$HOME/Library/LaunchAgents/$OLD_LABEL.v3.plist" \
+  "$HOME/Library/LaunchAgents/$OLD_LABEL.hd.plist" \
+  "$PLIST"
+do
+  /bin/launchctl bootout "gui/$UID_NUMBER" "$plist" >/dev/null 2>&1 || true
+  /bin/rm -f "$plist"
+done
 
-[[ -s "$TMP_IMAGE" ]] || fail "The downloaded background was empty."
+# Kill only processes that contain one of our wallpaper paths/names.
+/usr/bin/pkill -9 -f 'StormyLakeWallpaper' >/dev/null 2>&1 || true
+/usr/bin/pkill -9 -f 'wallpaper-crisp\.js' >/dev/null 2>&1 || true
+/usr/bin/pkill -9 -f 'wallpaper\.js' >/dev/null 2>&1 || true
+sleep 2
 
+# Download the original 5712 x 2877 source image. No tiny embedded thumbnail.
+printf 'Downloading the 5712-pixel background…\n'
+TMP_IMAGE="$ROOT/stormy-lake.download"
+/bin/rm -f "$TMP_IMAGE" "$IMAGE"
+/usr/bin/curl -fL --retry 5 --retry-delay 2 --connect-timeout 25 \
+  -A 'Mozilla/5.0' "$IMAGE_URL" -o "$TMP_IMAGE" \
+  || fail "The full-resolution image could not be downloaded."
+
+[[ -s "$TMP_IMAGE" ]] || fail "The full-resolution image download was empty."
 WIDTH="$(/usr/bin/sips -g pixelWidth "$TMP_IMAGE" 2>/dev/null | /usr/bin/awk '/pixelWidth/ {print $2; exit}')"
 HEIGHT="$(/usr/bin/sips -g pixelHeight "$TMP_IMAGE" 2>/dev/null | /usr/bin/awk '/pixelHeight/ {print $2; exit}')"
-if [[ ! "$WIDTH" =~ ^[0-9]+$ || ! "$HEIGHT" =~ ^[0-9]+$ ]]; then
-  fail "macOS could not read the downloaded background image."
-fi
-
-# A normal desktop needs enough source pixels to avoid the blocky result from the old build.
-if (( WIDTH < 1800 || HEIGHT < 850 )); then
-  printf 'The first image was only %sx%s; fetching the larger fallback…\n' "$WIDTH" "$HEIGHT"
-  /usr/bin/curl -fL --retry 4 --retry-delay 1 --connect-timeout 20 \
-     -A 'Mozilla/5.0' "$FALLBACK_IMAGE_URL" -o "$TMP_IMAGE" \
-     || fail "The high-resolution fallback could not be downloaded."
-  WIDTH="$(/usr/bin/sips -g pixelWidth "$TMP_IMAGE" 2>/dev/null | /usr/bin/awk '/pixelWidth/ {print $2; exit}')"
-  HEIGHT="$(/usr/bin/sips -g pixelHeight "$TMP_IMAGE" 2>/dev/null | /usr/bin/awk '/pixelHeight/ {print $2; exit}')"
-fi
-
-if [[ ! "$WIDTH" =~ ^[0-9]+$ || ! "$HEIGHT" =~ ^[0-9]+$ ]] || (( WIDTH < 1800 || HEIGHT < 850 )); then
-  fail "The replacement background was not large enough to use safely."
-fi
-mv -f "$TMP_IMAGE" "$IMAGE"
-printf 'Background ready at %sx%s.\n' "$WIDTH" "$HEIGHT"
+[[ "$WIDTH" =~ ^[0-9]+$ && "$HEIGHT" =~ ^[0-9]+$ ]] || fail "macOS could not read the downloaded image."
+(( WIDTH >= 3000 && HEIGHT >= 1400 )) || fail "The image host returned a small preview (${WIDTH}x${HEIGHT}) instead of the original."
+/bin/mv -f "$TMP_IMAGE" "$IMAGE"
+printf 'Using a %sx%s source image.\n' "$WIDTH" "$HEIGHT"
 
 cat > "$HTML" <<'HTML'
 <!doctype html>
@@ -70,254 +75,130 @@ cat > "$HTML" <<'HTML'
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <style>
-  :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #06111a; }
-  .scene {
-    position: fixed;
-    inset: -10px;
-    background-image: url('stormy-lake-hd.jpg');
-    background-repeat: no-repeat;
-    background-position: center center;
-    background-size: cover;
-    image-rendering: auto;
-    transform: translateZ(0);
-    will-change: transform;
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#06111a; }
+  .image-layer {
+    position:fixed;
+    inset:-10px;
+    background-image:url('stormy-lake-5712.jpg');
+    background-position:center center;
+    background-repeat:no-repeat;
+    background-size:cover;
+    image-rendering:auto;
+    transform:translateZ(0) scale(1.006);
+    backface-visibility:hidden;
   }
-  #base {
-    filter: brightness(.76) saturate(.92) contrast(1.07);
+  #left-trees {
+    pointer-events:none;
+    transform-origin:14% 72%;
+    clip-path:polygon(0 0,39% 0,36% 64%,30% 76%,0 76%);
+    -webkit-mask-image:linear-gradient(to right,#000 0 75%,transparent 100%),linear-gradient(to bottom,#000 0 78%,transparent 100%);
+    -webkit-mask-composite:source-in;
+    animation:leftSway 8s ease-in-out infinite alternate;
   }
-  #leftTrees, #rightTrees {
-    pointer-events: none;
-    filter: brightness(.76) saturate(.92) contrast(1.07);
-  }
-  #leftTrees {
-    opacity: .56;
-    -webkit-mask-image: radial-gradient(ellipse 47% 72% at 4% 45%, #000 0 43%, rgba(0,0,0,.7) 55%, transparent 76%);
-    transform-origin: 8% 78%;
-    animation: leftSway 8.5s ease-in-out infinite;
-  }
-  #rightTrees {
-    opacity: .48;
-    -webkit-mask-image: radial-gradient(ellipse 35% 60% at 92% 48%, #000 0 42%, rgba(0,0,0,.65) 58%, transparent 82%);
-    transform-origin: 91% 78%;
-    animation: rightSway 7.4s ease-in-out infinite;
+  #right-trees {
+    pointer-events:none;
+    transform-origin:84% 69%;
+    clip-path:polygon(65% 6%,100% 6%,100% 73%,69% 73%);
+    -webkit-mask-image:linear-gradient(to left,#000 0 78%,transparent 100%),linear-gradient(to bottom,#000 0 80%,transparent 100%);
+    -webkit-mask-composite:source-in;
+    animation:rightSway 9.4s ease-in-out infinite alternate;
   }
   @keyframes leftSway {
-    0%,100% { transform: translate3d(-1px,0,0) rotate(-.035deg); }
-    50% { transform: translate3d(3px,0,0) rotate(.055deg); }
+    0% { transform:translateX(-1.5px) rotate(-.045deg) scale(1.006); }
+    50% { transform:translateX(.5px) rotate(.018deg) scale(1.006); }
+    100% { transform:translateX(2.5px) rotate(.065deg) scale(1.006); }
   }
   @keyframes rightSway {
-    0%,100% { transform: translate3d(1.5px,0,0) rotate(.03deg); }
-    50% { transform: translate3d(-2px,0,0) rotate(-.045deg); }
+    0% { transform:translateX(1.5px) rotate(.04deg) scale(1.006); }
+    100% { transform:translateX(-2px) rotate(-.055deg) scale(1.006); }
   }
-  #stormLight {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background:
-      radial-gradient(ellipse 42% 45% at 91% 42%, rgba(255,132,59,.18), transparent 65%),
-      linear-gradient(to bottom, rgba(1,12,23,.18), rgba(0,6,13,.05) 55%, rgba(0,8,17,.22));
-    mix-blend-mode: screen;
+  .mist {
+    position:fixed;
+    border-radius:50%;
+    filter:blur(38px);
+    mix-blend-mode:screen;
+    pointer-events:none;
+    background:radial-gradient(ellipse,rgba(197,216,226,.44),rgba(179,202,214,.14) 50%,transparent 74%);
+    will-change:transform;
   }
-  #fx { position: fixed; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
-  #vignette {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background: radial-gradient(ellipse at 52% 48%, transparent 38%, rgba(0,5,12,.12) 72%, rgba(0,3,8,.40) 100%);
+  #mist-a { width:46vw;height:11vh;left:17vw;top:30vh;opacity:.12;animation:mistA 22s ease-in-out infinite alternate; }
+  #mist-b { width:38vw;height:9vh;left:43vw;top:44vh;opacity:.085;animation:mistB 27s ease-in-out infinite alternate; }
+  @keyframes mistA { from{transform:translateX(-4vw) translateY(1vh) scale(.96)} to{transform:translateX(5vw) translateY(-1vh) scale(1.07)} }
+  @keyframes mistB { from{transform:translateX(4vw) scale(.96)} to{transform:translateX(-5vw) scale(1.08)} }
+  #water-shimmer {
+    position:fixed;left:0;right:0;top:59%;bottom:0;pointer-events:none;
+    opacity:.11;mix-blend-mode:screen;
+    background:repeating-linear-gradient(176deg,transparent 0 14px,rgba(177,214,234,.13) 16px,transparent 19px 34px);
+    background-size:135% 135%;
+    -webkit-mask-image:linear-gradient(to bottom,transparent,#000 23%);
+    animation:waterShimmer 14s linear infinite;
+  }
+  @keyframes waterShimmer { from{background-position:0 0} to{background-position:90px 30px} }
+  canvas { position:fixed;inset:0;width:100%;height:100%;pointer-events:none; }
+  #finish {
+    position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(circle at 51% 46%,transparent 44%,rgba(0,6,13,.22) 100%),rgba(3,14,24,.025);
   }
 </style>
 </head>
 <body>
-  <div id="base" class="scene"></div>
-  <div id="leftTrees" class="scene"></div>
-  <div id="rightTrees" class="scene"></div>
-  <div id="stormLight"></div>
-  <canvas id="fx"></canvas>
-  <div id="vignette"></div>
+  <div id="base" class="image-layer"></div>
+  <div id="left-trees" class="image-layer"></div>
+  <div id="right-trees" class="image-layer"></div>
+  <div id="mist-a" class="mist"></div>
+  <div id="mist-b" class="mist"></div>
+  <div id="water-shimmer"></div>
+  <canvas id="weather"></canvas>
+  <div id="finish"></div>
 <script>
 'use strict';
-const canvas = document.getElementById('fx');
-const ctx = canvas.getContext('2d', {alpha: true, desynchronized: true});
-let W = 0, H = 0, DPR = 1, last = 0;
-let rain = [], rings = [], mist = [], splashes = [];
-
-function randomRain() {
-  const depth = Math.random();
-  return {
-    x: Math.random() * (W + 180),
-    y: Math.random() * (H + 120) - 120,
-    speed: 360 + depth * 680,
-    length: 10 + depth * 27,
-    alpha: .10 + depth * .34,
-    width: .45 + depth * 1.0
-  };
+const canvas=document.getElementById('weather');
+const ctx=canvas.getContext('2d',{alpha:true,desynchronized:true});
+let W=1,H=1,last=0,rain=[],rings=[];
+function reset(){
+  W=Math.max(1,innerWidth);H=Math.max(1,innerHeight);
+  canvas.width=W;canvas.height=H;
+  rain=[];rings=[];
+  const count=Math.min(600,Math.round(330*W*H/(1920*1080)));
+  for(let i=0;i<count;i++) rain.push({
+    x:Math.random()*W,y:Math.random()*H,
+    v:470+Math.random()*730,l:10+Math.random()*26,
+    a:.10+Math.random()*.33,w:.55+Math.random()*.8
+  });
+  for(let i=0;i<24;i++) rings.push({
+    x:W*(.25+Math.random()*.72),y:H*(.65+Math.random()*.32),
+    p:Math.random(),v:.18+Math.random()*.24
+  });
 }
-
-function resize() {
-  W = Math.max(1, innerWidth);
-  H = Math.max(1, innerHeight);
-  DPR = Math.min(devicePixelRatio || 1, 2);
-  canvas.width = Math.round(W * DPR);
-  canvas.height = Math.round(H * DPR);
-  canvas.style.width = W + 'px';
-  canvas.style.height = H + 'px';
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-
-  const count = Math.min(620, Math.round(300 * W * H / (1440 * 900)));
-  rain = Array.from({length: count}, randomRain);
-  rings = Array.from({length: 24}, () => ({
-    x: W * (.23 + Math.random() * .73),
-    y: H * (.64 + Math.random() * .32),
-    age: Math.random(),
-    speed: .15 + Math.random() * .22
-  }));
-  mist = Array.from({length: 6}, (_, i) => ({
-    baseX: W * (.19 + i * .105),
-    y: H * (.28 + Math.random() * .25),
-    rx: W * (.11 + Math.random() * .11),
-    ry: H * (.035 + Math.random() * .045),
-    phase: Math.random() * Math.PI * 2,
-    rate: .055 + Math.random() * .06,
-    alpha: .018 + Math.random() * .026
-  }));
-  splashes = Array.from({length: 18}, () => ({
-    x: W * (.20 + Math.random() * .77),
-    y: H * (.65 + Math.random() * .31),
-    age: Math.random(),
-    speed: .35 + Math.random() * .38
-  }));
-}
-addEventListener('resize', resize, {passive:true});
-resize();
-
-function drawMist(t) {
-  ctx.save();
-  ctx.globalCompositeOperation = 'screen';
-  for (const m of mist) {
-    const x = m.baseX + Math.sin(t * m.rate + m.phase) * W * .07;
-    const g = ctx.createRadialGradient(x, m.y, 0, x, m.y, m.rx);
-    g.addColorStop(0, `rgba(205,222,232,${m.alpha})`);
-    g.addColorStop(.55, `rgba(185,207,220,${m.alpha * .55})`);
-    g.addColorStop(1, 'rgba(180,205,220,0)');
-    ctx.save();
-    ctx.translate(x, m.y);
-    ctx.scale(1, m.ry / m.rx);
-    ctx.translate(-x, -m.y);
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(x, m.y, m.rx, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+addEventListener('resize',reset);reset();
+function frame(ms){
+  if(ms-last<32){requestAnimationFrame(frame);return;}
+  const dt=Math.min(.05,(ms-last)/1000||.033);last=ms;
+  ctx.clearRect(0,0,W,H);ctx.lineCap='round';
+  for(const p of rain){
+    p.y+=p.v*dt;p.x-=p.v*.20*dt;
+    if(p.y>H+40||p.x<-45){p.y=-40-Math.random()*H*.28;p.x=Math.random()*W+W*.06;}
+    ctx.strokeStyle=`rgba(210,229,240,${p.a})`;ctx.lineWidth=p.w;
+    ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(p.x-p.l*.27,p.y+p.l);ctx.stroke();
   }
-  ctx.restore();
-}
-
-function drawWater(t) {
-  const top = H * .60;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, top, W, H - top);
-  ctx.clip();
-  ctx.globalCompositeOperation = 'screen';
-
-  // Fine moving wave highlights—an overlay only, never a warped copy of the image.
-  for (let j = 0; j < 19; j++) {
-    const baseY = top + (j + .6) * (H - top) / 19;
-    const alpha = .020 + j / 19 * .028;
-    ctx.strokeStyle = `rgba(175,211,229,${alpha})`;
-    ctx.lineWidth = .55 + j / 19 * .5;
-    ctx.beginPath();
-    for (let x = -20; x <= W + 20; x += 12) {
-      const y = baseY + Math.sin(x * .018 + t * 1.3 + j * .71) * (1.1 + j * .045)
-                    + Math.sin(x * .041 - t * .75) * .65;
-      if (x === -20) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-  }
-
-  for (const r of rings) {
-    r.age += r.speed / 30;
-    if (r.age > 1) {
-      r.age = 0;
-      r.x = W * (.23 + Math.random() * .73);
-      r.y = H * (.64 + Math.random() * .32);
-    }
-    const radius = 2 + r.age * 30;
-    ctx.strokeStyle = `rgba(218,235,244,${(1-r.age) * .30})`;
-    ctx.lineWidth = .7;
-    ctx.beginPath();
-    ctx.ellipse(r.x, r.y, radius, radius * .24, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  for (const s of splashes) {
-    s.age += s.speed / 30;
-    if (s.age > 1) {
-      s.age = 0;
-      s.x = W * (.20 + Math.random() * .77);
-      s.y = H * (.65 + Math.random() * .31);
-    }
-    if (s.age < .16) {
-      const a = (.16 - s.age) * 1.3;
-      const h = 2 + s.age * 24;
-      ctx.strokeStyle = `rgba(230,242,248,${a})`;
-      ctx.lineWidth = .7;
-      ctx.beginPath();
-      ctx.moveTo(s.x, s.y);
-      ctx.quadraticCurveTo(s.x - 2, s.y - h * .7, s.x - 4, s.y - h);
-      ctx.moveTo(s.x, s.y);
-      ctx.quadraticCurveTo(s.x + 2, s.y - h * .65, s.x + 4, s.y - h * .9);
-      ctx.stroke();
+  for(const r of rings){
+    r.p+=r.v*dt;
+    if(r.p>1){r.p=0;r.x=W*(.24+Math.random()*.74);r.y=H*(.65+Math.random()*.32);}
+    const radius=3+r.p*36;
+    ctx.strokeStyle=`rgba(221,235,243,${(1-r.p)*.30})`;ctx.lineWidth=.8;
+    ctx.beginPath();ctx.ellipse(r.x,r.y,radius,radius*.24,0,0,Math.PI*2);ctx.stroke();
+    if(r.p<.07){
+      ctx.strokeStyle='rgba(231,241,247,.28)';ctx.beginPath();
+      ctx.moveTo(r.x,r.y);ctx.lineTo(r.x-2,r.y-7);
+      ctx.moveTo(r.x,r.y);ctx.lineTo(r.x+3,r.y-6);ctx.stroke();
     }
   }
-  ctx.restore();
+  const t=ms*.001,pulse=Math.max(0,Math.sin(t*.29-1.15)),flash=Math.pow(pulse,52)*.055;
+  if(flash>.001){ctx.fillStyle=`rgba(207,226,245,${flash})`;ctx.fillRect(0,0,W,H);}
+  requestAnimationFrame(frame);
 }
-
-function drawRain(dt) {
-  ctx.save();
-  ctx.lineCap = 'round';
-  for (const p of rain) {
-    p.y += p.speed * dt;
-    p.x -= p.speed * .19 * dt;
-    if (p.y > H + 50 || p.x < -60) {
-      Object.assign(p, randomRain());
-      p.y = -40 - Math.random() * H * .20;
-      p.x = Math.random() * W + W * .06;
-    }
-    ctx.strokeStyle = `rgba(207,227,239,${p.alpha})`;
-    ctx.lineWidth = p.width;
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(p.x - p.length * .26, p.y + p.length);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function render(ms) {
-  requestAnimationFrame(render);
-  if (ms - last < 31) return; // About 30 fps: smooth without wasting the GPU.
-  const dt = Math.min(.05, (ms - last) / 1000 || .033);
-  last = ms;
-  const t = ms / 1000;
-  ctx.clearRect(0, 0, W, H);
-  drawMist(t);
-  drawWater(t);
-  drawRain(dt);
-
-  // Rare, soft cloud illumination rather than a harsh full-screen flash.
-  const pulse = Math.pow(Math.max(0, Math.sin(t * .31 - 1.1)), 42) * .08;
-  if (pulse > .001) {
-    const g = ctx.createRadialGradient(W * .50, H * .15, 0, W * .50, H * .15, W * .48);
-    g.addColorStop(0, `rgba(205,225,245,${pulse})`);
-    g.addColorStop(1, 'rgba(205,225,245,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, W, H * .62);
-  }
-}
-requestAnimationFrame(render);
+requestAnimationFrame(frame);
 </script>
 </body>
 </html>
@@ -328,49 +209,41 @@ ObjC.import('Cocoa');
 ObjC.import('WebKit');
 ObjC.import('CoreGraphics');
 
-const app = $.NSApplication.sharedApplication;
+const app=$.NSApplication.sharedApplication;
 app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
-const root = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('STORMY_ROOT'));
-const htmlURL = $.NSURL.fileURLWithPath(root + '/wallpaper.html');
-const rootURL = $.NSURL.fileURLWithPath(root);
-const windows = [];
-const webviews = [];
-const screens = $.NSScreen.screens;
-const desktopLevel = $.CGWindowLevelForKey($.kCGDesktopWindowLevelKey) + 1;
+const root=ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('STORMY_ROOT'));
+const htmlURL=$.NSURL.fileURLWithPath(root+'/wallpaper.html');
+const rootURL=$.NSURL.fileURLWithPath(root);
+const windows=[];
+const webviews=[];
+const screens=$.NSScreen.screens;
+const desktopLevel=$.CGWindowLevelForKey($.kCGDesktopWindowLevelKey)+1;
 
-for (let i = 0; i < screens.count; i++) {
-  const screen = screens.objectAtIndex(i);
-  const frame = screen.frame;
-  const window = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
-    frame,
-    $.NSWindowStyleMaskBorderless,
-    $.NSBackingStoreBuffered,
-    false
+for(let i=0;i<screens.count;i++){
+  const screen=screens.objectAtIndex(i);
+  const frame=screen.frame;
+  const win=$.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
+    frame,$.NSWindowStyleMaskBorderless,$.NSBackingStoreBuffered,false
   );
-  window.opaque = true;
-  window.backgroundColor = $.NSColor.blackColor;
-  window.hasShadow = false;
-  window.ignoresMouseEvents = true;
-  window.hidesOnDeactivate = false;
-  window.releasedWhenClosed = false;
-  window.level = desktopLevel;
-  window.collectionBehavior =
-    $.NSWindowCollectionBehaviorCanJoinAllSpaces |
-    $.NSWindowCollectionBehaviorStationary |
-    $.NSWindowCollectionBehaviorIgnoresCycle;
+  win.opaque=true;
+  win.backgroundColor=$.NSColor.blackColor;
+  win.hasShadow=false;
+  win.ignoresMouseEvents=true;
+  win.hidesOnDeactivate=false;
+  win.releasedWhenClosed=false;
+  win.level=desktopLevel;
+  win.collectionBehavior=$.NSWindowCollectionBehaviorCanJoinAllSpaces|$.NSWindowCollectionBehaviorStationary|$.NSWindowCollectionBehaviorIgnoresCycle;
 
-  const configuration = $.WKWebViewConfiguration.alloc.init;
-  const web = $.WKWebView.alloc.initWithFrameConfiguration(
-    $.NSMakeRect(0, 0, frame.size.width, frame.size.height),
-    configuration
+  const config=$.WKWebViewConfiguration.alloc.init;
+  const web=$.WKWebView.alloc.initWithFrameConfiguration(
+    $.NSMakeRect(0,0,frame.size.width,frame.size.height),config
   );
-  web.autoresizingMask = $.NSViewWidthSizable | $.NSViewHeightSizable;
-  web.loadFileURLAllowingReadAccessToURL(htmlURL, rootURL);
-  window.contentView = web;
-  window.setFrameDisplay(frame, true);
-  window.orderFrontRegardless;
-  windows.push(window);
-  webviews.push(web);
+  web.autoresizingMask=$.NSViewWidthSizable|$.NSViewHeightSizable;
+  web.loadFileURLAllowingReadAccessToURL(htmlURL,rootURL);
+  win.contentView=web;
+  win.setFrameDisplay(frame,true);
+  win.orderFrontRegardless;
+  windows.push(win);webviews.push(web);
 }
 app.run;
 JXA
@@ -378,37 +251,31 @@ JXA
 cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
+<plist version="1.0"><dict>
   <key>Label</key><string>$LABEL</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/bin/osascript</string>
-    <string>-l</string>
-    <string>JavaScript</string>
-    <string>$JXA</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/bin/osascript</string><string>-l</string><string>JavaScript</string><string>$JXA</string>
   </array>
-  <key>EnvironmentVariables</key>
-  <dict><key>STORMY_ROOT</key><string>$ROOT</string></dict>
+  <key>EnvironmentVariables</key><dict><key>STORMY_ROOT</key><string>$ROOT</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Interactive</string>
   <key>LimitLoadToSessionType</key><string>Aqua</string>
+  <key>ThrottleInterval</key><integer>5</integer>
   <key>StandardOutPath</key><string>$ROOT/wallpaper.log</string>
   <key>StandardErrorPath</key><string>$ROOT/wallpaper-error.log</string>
-</dict>
-</plist>
+</dict></plist>
 PLIST
 
-/bin/launchctl bootstrap "gui/$UID_NUMBER" "$PLIST" \
-  || fail "macOS would not register the repaired wallpaper player."
+/bin/launchctl enable "gui/$UID_NUMBER/$LABEL" >/dev/null 2>&1 || true
+/bin/launchctl bootstrap "gui/$UID_NUMBER" "$PLIST" || fail "macOS would not load the crisp wallpaper service."
 /bin/launchctl kickstart -k "gui/$UID_NUMBER/$LABEL" >/dev/null 2>&1 || true
-sleep 3
+sleep 4
 
 if /usr/bin/pgrep -f "$JXA" >/dev/null 2>&1; then
-  printf '\nDone — the full-resolution animated wallpaper is now running.\n'
-  /usr/bin/osascript -e 'display notification "The sharp storm wallpaper is now running." with title "Wallpaper repaired"' >/dev/null 2>&1 || true
+  printf '\nDone — the old blocky renderer is gone and the crisp animated wallpaper is running.\n'
+  /usr/bin/osascript -e 'display notification "The crisp animated lake wallpaper is now running." with title "Wallpaper repaired"' >/dev/null 2>&1 || true
 else
-  ERROR_TAIL="$(/usr/bin/tail -n 10 "$ROOT/wallpaper-error.log" 2>/dev/null || true)"
-  fail "The repaired player did not stay running. $ERROR_TAIL"
+  ERR="$(/usr/bin/tail -n 12 "$ROOT/wallpaper-error.log" 2>/dev/null || true)"
+  fail "The crisp wallpaper process did not stay running. ${ERR}"
 fi
